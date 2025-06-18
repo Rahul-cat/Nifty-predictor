@@ -1,43 +1,62 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 import numpy as np
-import yfinance as yf
-import joblib
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
+import ta
+from sklearn.ensemble import RandomForestClassifier
 
-# Load Models
-model = joblib.load("rf_model.pkl")
-hold_model = joblib.load("hold_model.pkl")
-scaler = joblib.load("scaler.pkl")
+st.set_page_config(page_title="Nifty Next Candle Predictor", layout="centered")
+st.title("📈 Nifty Next 5-Min Candle Predictor")
 
-st.title("🔮 Nifty Option Signal Predictor")
+if st.button("🔮 Predict Next Candle"):
+    with st.spinner("Fetching data and predicting..."):
 
-# Get Latest NIFTY Data
-df = yf.download("^NSEI", interval="5m", period="1d")
-df.dropna(inplace=True)
+        # Step 1: Fetch 5-min interval data
+        data = yf.download("^NSEI", period="5d", interval="5m")
 
-# Add Technical Indicators
-df['EMA_10'] = EMAIndicator(close=df['Close'], window=10).ema_indicator()
-df['EMA_20'] = EMAIndicator(close=df['Close'], window=20).ema_indicator()
-df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
-macd = MACD(close=df['Close'])
-df['MACD'] = macd.macd()
-df['MACD_Signal'] = macd.macd_signal()
-df['ATR'] = AverageTrueRange(high=df['High'], low=df['Low'], close=df['Close']).average_true_range()
+        # Step 2: Basic sanity checks
+        if data.empty or 'Close' not in data.columns:
+            st.error("Failed to fetch data or 'Close' column missing.")
+            st.stop()
 
-# Prepare features
-df.dropna(inplace=True)
-latest = df.iloc[-1:]
-features = ['Open', 'High', 'Low', 'Close', 'Volume', 'EMA_10', 'EMA_20', 'RSI', 'MACD', 'MACD_Signal', 'ATR']
-X = scaler.transform(latest[features])
+        # Step 3: Clean Close prices
+        close_prices = data['Close'].copy()
+        close_prices = close_prices.fillna(method='ffill').fillna(method='bfill')
+        if close_prices.ndim != 1:
+            close_prices = close_prices.squeeze()
 
-# Predict
-signal = model.predict(X)[0]
-hold_minutes = int(hold_model.predict(X)[0])
+        # Step 4: Compute indicators safely
+        try:
+            data['RSI'] = ta.momentum.RSIIndicator(close=close_prices).rsi()
+            data['EMA_10'] = ta.trend.EMAIndicator(close=close_prices, window=10).ema_indicator()
+            data['EMA_20'] = ta.trend.EMAIndicator(close=close_prices, window=20).ema_indicator()
+            data['MACD'] = ta.trend.MACD(close=close_prices).macd()
+            data['Returns'] = close_prices.pct_change()
+        except Exception as e:
+            st.error(f"Error computing indicators: {e}")
+            st.stop()
 
-# Output
-st.write("## 📊 Prediction Result")
-st.write(f"**Trade Type:** {'📈 CALL' if signal == 1 else '📉 PUT'}")
-st.write(f"**Suggested Holding Time:** {hold_minutes} minutes")
+        # Step 5: Drop missing values
+        data.dropna(inplace=True)
+
+        # Step 6: Define prediction target
+        data['Target'] = (data['Close'].shift(-1) > data['Close']).astype(int)
+
+        # Step 7: Feature selection
+        features = ['RSI', 'EMA_10', 'EMA_20', 'MACD', 'Returns']
+        X = data[features]
+        y = data['Target']
+
+        # Step 8: Train model (leave last row out for prediction)
+        model = RandomForestClassifier()
+        model.fit(X[:-1], y[:-1])
+
+        # Step 9: Make prediction
+        last_row = X.iloc[[-1]]
+        prediction = model.predict(last_row)[0]
+
+        # Step 10: Show result
+        if prediction == 1:
+            st.success("✅ Next Candle May Go UP 📈")
+        else:
+            st.error("❌ Next Candle May Go DOWN 📉")
