@@ -13,27 +13,35 @@ if st.button("🔮 Predict Next Candle"):
 
         data = yf.download("^NSEI", period="5d", interval="5m")
 
-        data['RSI'] = ta.momentum.RSIIndicator(data['Close']).rsi()
-        data['EMA_10'] = ta.trend.EMAIndicator(data['Close'], window=10).ema_indicator()
-        data['EMA_20'] = ta.trend.EMAIndicator(data['Close'], window=20).ema_indicator()
-        data['MACD'] = ta.trend.MACD(data['Close']).macd()
-        data['Returns'] = data['Close'].pct_change()
-        data.dropna(inplace=True)
+        # Ensure 'Close' has no NaN and is 1D
+        close = data['Close'].dropna()
 
-        data['Target'] = data['Close'].shift(-1) > data['Close']
-        data['Target'] = data['Target'].astype(int)
+        # Only calculate if there's enough data
+        if len(close) > 20:
+            data['RSI'] = ta.momentum.RSIIndicator(close=close, window=14).rsi().values.ravel()
+            data['EMA_10'] = ta.trend.EMAIndicator(close=close, window=10).ema_indicator()
+            data['EMA_20'] = ta.trend.EMAIndicator(close=close, window=20).ema_indicator()
+            data['MACD'] = ta.trend.MACD(close=close).macd()
+            data['Returns'] = close.pct_change()
 
-        features = ['RSI', 'EMA_10', 'EMA_20', 'MACD', 'Returns']
-        X = data[features]
-        y = data['Target']
+            data.dropna(inplace=True)
 
-        model = RandomForestClassifier()
-        model.fit(X[:-1], y[:-1])  # leave last row
+            data['Target'] = data['Close'].shift(-1) > data['Close']
+            data['Target'] = data['Target'].astype(int)
 
-        last_row = X.iloc[-1:]
-        prediction = model.predict(last_row)[0]
+            features = ['RSI', 'EMA_10', 'EMA_20', 'MACD', 'Returns']
+            X = data[features]
+            y = data['Target']
 
-        if prediction == 1:
-            st.success("✅ Next Candle May Go UP 📈")
+            model = RandomForestClassifier()
+            model.fit(X[:-1], y[:-1])  # leave last row
+
+            last_row = X.iloc[-1:]
+            prediction = model.predict(last_row)[0]
+
+            if prediction == 1:
+                st.success("✅ Next Candle May Go UP 📈")
+            else:
+                st.error("❌ Next Candle May Go DOWN 📉")
         else:
-            st.error("❌ Next Candle May Go DOWN 📉")
+            st.error("Not enough data to make a prediction. Try again later.")
