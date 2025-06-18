@@ -1,9 +1,0 @@
-from sklearn.preprocessing import StandardScaler
-import joblib
-
-# Fit the scaler on your features (X)
-scaler = StandardScaler()
-scaler.fit(X)  # X is your features DataFrame
-
-# Save it to scaler.pkl
-joblib.dump(scaler, 'scaler.pkl')
