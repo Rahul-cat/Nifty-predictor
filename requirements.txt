@@ -1,6 +1,1 @@
-streamlit
-yfinance
-pandas
-numpy
-scikit-learn
-ta
+pip install streamlit yfinance pandas scikit-learn ta
