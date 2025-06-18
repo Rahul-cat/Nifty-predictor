@@ -1,62 +1,70 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
-import ta
-from sklearn.ensemble import RandomForestClassifier
+import joblib
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Nifty Next Candle Predictor", layout="centered")
-st.title("📈 Nifty Next 5-Min Candle Predictor")
+# Load model and scaler
+model = joblib.load("rf_model.pkl")
+scaler = joblib.load("scaler.pkl")
 
-if st.button("🔮 Predict Next Candle"):
-    with st.spinner("Fetching data and predicting..."):
+st.title("🔮 Nifty 5-Min Candle Predictor & Option Helper")
+st.markdown("**Predicts CALL/PUT + Suggests Entry, Strike, Exit, SL, Target, Holding Time**")
 
-        # Step 1: Fetch 5-min interval data
-        data = yf.download("^NSEI", period="5d", interval="5m")
+# User inputs
+ema_20 = st.number_input("📊 EMA 20", value=18000)
+rsi = st.number_input("📈 RSI", value=55)
+atr = st.number_input("🌊 ATR", value=15)
 
-        # Step 2: Basic sanity checks
-        if data.empty or 'Close' not in data.columns:
-            st.error("Failed to fetch data or 'Close' column missing.")
-            st.stop()
+if st.button("🚀 Predict Now"):
+    # Create DataFrame
+    input_data = pd.DataFrame([[ema_20, rsi, atr]], columns=["EMA_20", "RSI", "ATR"])
+    X_scaled = scaler.transform(input_data)
+    
+    # Predict
+    prediction = model.predict(X_scaled)[0]
+    prob = model.predict_proba(X_scaled)[0]
+    confidence = max(prob)
 
-        # Step 3: Clean Close prices
-        close_prices = data['Close'].copy()
-        close_prices = close_prices.fillna(method='ffill').fillna(method='bfill')
-        if close_prices.ndim != 1:
-            close_prices = close_prices.squeeze()
+    # Suggested Option Type
+    option_type = "CALL (BUY)" if prediction == 1 else "PUT (BUY)"
+    st.markdown(f"### 🎯 Prediction: **{option_type}**")
+    st.markdown(f"🧠 Model Confidence: **{confidence * 100:.2f}%**")
 
-        # Step 4: Compute indicators safely
-        try:
-            data['RSI'] = ta.momentum.RSIIndicator(close=close_prices).rsi()
-            data['EMA_10'] = ta.trend.EMAIndicator(close=close_prices, window=10).ema_indicator()
-            data['EMA_20'] = ta.trend.EMAIndicator(close=close_prices, window=20).ema_indicator()
-            data['MACD'] = ta.trend.MACD(close=close_prices).macd()
-            data['Returns'] = close_prices.pct_change()
-        except Exception as e:
-            st.error(f"Error computing indicators: {e}")
-            st.stop()
+    # Nearest strike price logic
+    nearest_strike = int(round(ema_20 / 50) * 50)
+    st.markdown(f"🏹 Suggested Strike Price: **{nearest_strike} CE/PE**")
 
-        # Step 5: Drop missing values
-        data.dropna(inplace=True)
+    # Entry time = now
+    now = datetime.now()
+    entry_time = now.strftime("%I:%M %p")
 
-        # Step 6: Define prediction target
-        data['Target'] = (data['Close'].shift(-1) > data['Close']).astype(int)
+    # Exit time based on confidence
+    if confidence > 0.8:
+        hold_min = 20
+    elif confidence > 0.6:
+        hold_min = 15
+    else:
+        hold_min = 10
+    exit_time = (now + timedelta(minutes=hold_min)).strftime("%I:%M %p")
 
-        # Step 7: Feature selection
-        features = ['RSI', 'EMA_10', 'EMA_20', 'MACD', 'Returns']
-        X = data[features]
-        y = data['Target']
+    st.markdown(f"📌 Suggested Entry Time: **{entry_time}**")
+    st.markdown(f"📤 Suggested Exit Time: **{exit_time}**")
+    st.markdown(f"⏱️ Suggested Holding Time: **{hold_min} minutes**")
 
-        # Step 8: Train model (leave last row out for prediction)
-        model = RandomForestClassifier()
-        model.fit(X[:-1], y[:-1])
+    # Premium Target & Stop-Loss (assume sample premium)
+    current_premium = 100  # you can change this
+    target = current_premium + atr * 2
+    stop_loss = current_premium - atr * 1.5
 
-        # Step 9: Make prediction
-        last_row = X.iloc[[-1]]
-        prediction = model.predict(last_row)[0]
+    st.markdown(f"🎯 Target Premium: **₹{target:.2f}**")
+    st.markdown(f"🛑 Stop Loss: **₹{stop_loss:.2f}**")
 
-        # Step 10: Show result
-        if prediction == 1:
-            st.success("✅ Next Candle May Go UP 📈")
-        else:
-            st.error("❌ Next Candle May Go DOWN 📉")
+    # Profit simulation
+    st.markdown("---")
+    st.markdown("### 💰 Example Profit Simulation:")
+    qty = 50  # 1 lot
+    profit = (target - current_premium) * qty
+    loss = (current_premium - stop_loss) * qty
+    st.markdown(f"✅ Potential Profit: **₹{profit:.2f}**")
+    st.markdown(f"❌ Potential Loss: **₹{loss:.2f}**")
